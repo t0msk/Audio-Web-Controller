@@ -1,0 +1,32 @@
+{
+    "name": "audio-web-controller",
+    "version": "1.0.0",
+    "main": "controller/main.js",
+    "scripts": {
+        "start": "electron .",
+        "build:win": "electron-builder --win portable"
+    },
+    "devDependencies": {
+        "electron": "^30.0.0",
+        "electron-builder": "^26.0.12"
+    },
+    "build": {
+        "appId": "com.audio.controller",
+        "productName": "AudioWebController",
+        "directories": {
+            "output": "dist"
+        },
+        "files": [
+            "controller/**/*",
+            "helpers/**/*",
+            "package.json"
+        ],
+        "win": {
+            "target": [
+                "portable",
+                "nsis"
+            ],
+            "icon": "controller/icon.ico"
+        }
+    }
+}

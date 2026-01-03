@@ -1,0 +1,14 @@
+[
+    {
+        "id": "spotify",
+        "name": "Spotify",
+        "url": "https://open.spotify.com",
+        "autostart": true
+    },
+    {
+        "id": "youtube",
+        "name": "YouTube",
+        "url": "https://youtube.com",
+        "autostart": false
+    }
+]

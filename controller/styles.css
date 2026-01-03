@@ -1,0 +1,64 @@
+body {
+    font-family: sans-serif;
+    background: #1e1e1e;
+    color: #fff;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+th,
+td {
+    padding: 10px;
+    border: 1px solid #333;
+    text-align: left;
+}
+th {
+    background: #252526;
+}
+
+button {
+    cursor: pointer;
+    padding: 5px 10px;
+    margin-right: 5px;
+    background: #333;
+    color: white;
+    border: 1px solid #555;
+}
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+button:hover:not(:disabled) {
+    background: #444;
+}
+
+.status-running {
+    color: #4caf50;
+    font-weight: bold;
+}
+.status-muted {
+    color: #2196f3;
+    font-weight: bold;
+} /* Modrá pre muted */
+.status-stopped {
+    color: #f44336;
+}
+.status-starting {
+    color: #ff9800;
+    animation: blink 1s infinite;
+}
+.status-crashed {
+    color: #e91e63;
+    font-weight: bold;
+}
+
+@keyframes blink {
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.footer {
+    margin-top: 12px;
+}

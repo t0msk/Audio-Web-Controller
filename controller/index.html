@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8" />
+
+        <meta
+            http-equiv="Content-Security-Policy"
+            content="
+        default-src 'self';
+        script-src 'self';
+        style-src 'self';
+        img-src 'self' data:;
+      "
+        />
+
+        <link rel="stylesheet" href="./styles.css" />
+    </head>
+
+    <body>
+        <table>
+            <thead>
+                <tr>
+                    <th>Site</th>
+                    <th>Status</th>
+                    <th>Controls</th>
+                </tr>
+            </thead>
+            <tbody id="list"></tbody>
+        </table>
+
+        <div class="footer">
+            <button id="open-config">Open config file</button>
+        </div>
+
+        <script type="module" src="./renderer.js"></script>
+    </body>
+</html>
