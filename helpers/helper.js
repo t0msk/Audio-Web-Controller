@@ -2,36 +2,44 @@
 
 const { app, BrowserWindow, powerSaveBlocker } = require("electron");
 const path = require("path");
-// Uprav si cestu k constants podľa tvojej štruktúry
-const { STATUS, COMMANDS } = require("../controller/constants");
-
 const fs = require("fs");
-const logPath = path.join(app.getPath("userData"), "helper-debug.log");
-const log = (m) =>
-    fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${m}\n`);
 
-log("--- Helper Session Start ---");
+// Načítanie konštánt relatívne k umiestneniu helper.js
+const { STATUS, COMMANDS } = require(path.join(
+    __dirname,
+    "..",
+    "controller",
+    "constants.js"
+));
+
+// Logovanie do súboru pre diagnostiku na Windowse
+const debugLog = (m) => {
+    try {
+        const logPath = path.join(app.getPath("userData"), "helper-debug.log");
+        fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${m}\n`);
+    } catch (e) {}
+};
+
+debugLog("--- Helper Process Initializing ---");
 
 if (!process.argv[2]) {
-    log("Error: No arguments received.");
+    debugLog("Fatal: No site data received.");
     process.exit(1);
 }
 
 const site = JSON.parse(process.argv[2]);
-log(`Site: ${site.id}`);
 
-// Nastavenie ciest a názvu procesu
+// Konfigurácia Electron prostredia pre konkrétnu stránku
 try {
-    app.name = "AudioHelper";
+    app.name = `AudioHelper-${site.id}`;
+    const sessionPath = path.join(app.getPath("userData"), "sessions", site.id);
+    app.setPath("userData", sessionPath);
     app.setAppUserModelId(`com.audio.helper.${site.id}`);
-    const customPath = path.join(app.getPath("userData"), "sessions", site.id);
-    app.setPath("userData", customPath);
-    log(`UserData: ${customPath}`);
 } catch (e) {
-    log(`Path Error: ${e.message}`);
+    debugLog(`Config Error: ${e.message}`);
 }
 
-// FIX: Vynútenie okamžitého zápisu do stdout (dôležité pre Windows)
+// FIX: Vynútenie okamžitého posielania správ cez stdout na Windowse
 if (process.stdout._handle && process.stdout._handle.setBlocking) {
     process.stdout._handle.setBlocking(true);
 }
@@ -43,19 +51,21 @@ function send(msg) {
     try {
         process.stdout.write(msg + "\n");
     } catch (e) {
-        log(`Pipe Error: ${e.message}`);
+        debugLog(`Send error: ${e.message}`);
     }
 }
 
 function createWindow() {
     win = new BrowserWindow({
         title: site.name,
-        show: false, // Štartujeme skryté
-        width: 800,
-        height: 600,
+        show: false, // Vždy začína skryté
+        width: 600,
+        height: 300,
         webPreferences: {
             backgroundThrottling: false,
             autoplayPolicy: "no-user-gesture-required",
+            nodeIntegration: false,
+            contextIsolation: true,
         },
     });
 
@@ -65,13 +75,15 @@ function createWindow() {
         send(STATUS.RUNNING);
     });
 
-    win.webContents.on("render-process-gone", () => {
-        log("Render process crashed.");
-        process.exit(1);
-    });
+    // Audio Keep-alive trik (bráni uspatiu karty)
+    setInterval(() => {
+        if (win && !win.isDestroyed()) {
+            win.webContents.executeJavaScript("void 0").catch(() => {});
+        }
+    }, 15000);
 }
 
-// Príkazy z Main procesu
+// Spracovanie príkazov z Main procesu
 process.stdin.on("data", (data) => {
     const cmd = data.toString().trim();
     if (!win || win.isDestroyed()) return;
@@ -101,18 +113,16 @@ process.stdin.on("data", (data) => {
 
 app.whenReady()
     .then(() => {
-        log("App ready.");
+        debugLog("Helper App Ready.");
         powerSaveBlocker.start("prevent-app-suspension");
-
         createWindow();
 
-        // Heartbeat komunikácia
+        // Heartbeat pre kontrolu stability
         setInterval(() => send(COMMANDS.HEARTBEAT), 5000);
 
-        // Ak sa zavrie komunikačný kanál, helper sa musí vypnúť
+        // Ak sa preruší spojenie s ovládačom, vypni sa
         process.stdin.on("close", () => app.quit());
-        process.stdin.on("error", () => app.quit());
     })
     .catch((err) => {
-        log(`Boot Error: ${err.message}`);
+        debugLog(`App Boot Error: ${err.message}`);
     });
