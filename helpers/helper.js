@@ -2,72 +2,76 @@
 
 const { app, BrowserWindow, powerSaveBlocker } = require("electron");
 const path = require("path");
-const { STATUS, COMMANDS } = require("../controller/constants"); // Uisti sa, že cesta sedí
+// Uprav si cestu k constants podľa tvojej štruktúry
+const { STATUS, COMMANDS } = require("../controller/constants");
 
-if (!process.argv[2]) process.exit(1);
+const fs = require("fs");
+const logPath = path.join(app.getPath("userData"), "helper-debug.log");
+const log = (m) =>
+    fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${m}\n`);
+
+log("--- Helper Session Start ---");
+
+if (!process.argv[2]) {
+    log("Error: No arguments received.");
+    process.exit(1);
+}
+
 const site = JSON.parse(process.argv[2]);
+log(`Site: ${site.id}`);
 
-app.setAppUserModelId(`com.audio.helper.${site.id}`);
-const defaultUserData = app.getPath("userData");
-const customUserData = path.join(defaultUserData, "sessions", site.id);
-app.setPath("userData", customUserData);
+// Nastavenie ciest a názvu procesu
+try {
+    app.name = "AudioHelper";
+    app.setAppUserModelId(`com.audio.helper.${site.id}`);
+    const customPath = path.join(app.getPath("userData"), "sessions", site.id);
+    app.setPath("userData", customPath);
+    log(`UserData: ${customPath}`);
+} catch (e) {
+    log(`Path Error: ${e.message}`);
+}
 
-app.name = `Audio Helper - ${site.name}`;
-process.title = `audio-helper-${site.id}`;
-
-console.log(`[${site.id}] UserData path: ${app.getPath("userData")}`);
+// FIX: Vynútenie okamžitého zápisu do stdout (dôležité pre Windows)
+if (process.stdout._handle && process.stdout._handle.setBlocking) {
+    process.stdout._handle.setBlocking(true);
+}
 
 let win = null;
-let heartbeatInterval = null;
 
 function send(msg) {
-    // Ak už nemáme kam písať, nebudeme sa o to ani pokúšať
     if (!process.stdout.writable) return;
-
     try {
-        process.stdout.write(msg + "\n", (err) => {
-            if (err && err.code === "EPIPE") {
-                // Ak zistíme Broken Pipe, radšej ukončíme helper,
-                // lebo to znamená, že Controller je mŕtvy.
-                process.exit(0);
-            }
-        });
+        process.stdout.write(msg + "\n");
     } catch (e) {
-        // Ignorujeme chybu, proces sa pravdepodobne ukončuje
+        log(`Pipe Error: ${e.message}`);
     }
 }
 
 function createWindow() {
     win = new BrowserWindow({
         title: site.name,
-        show: false,
-        width: 300,
-        height: 300,
+        show: false, // Štartujeme skryté
+        width: 800,
+        height: 600,
         webPreferences: {
             backgroundThrottling: false,
-            offscreen: false,
+            autoplayPolicy: "no-user-gesture-required",
         },
     });
 
     win.loadURL(site.url);
 
-    win.webContents.on("page-title-updated", (e) => e.preventDefault());
-
     win.webContents.on("did-finish-load", () => {
-        // Keď sa stránka načíta (aj po reloade), pošleme RUNNING
         send(STATUS.RUNNING);
     });
 
-    win.webContents.on("render-process-gone", () => process.exit(1));
-
-    // Audio Keep-alive hack
-    setInterval(() => {
-        if (win && !win.isDestroyed()) {
-            win.webContents.executeJavaScript("void 0").catch(() => {});
-        }
-    }, 15000);
+    win.webContents.on("render-process-gone", () => {
+        log("Render process crashed.");
+        process.exit(1);
+    });
 }
 
+// Príkazy z Main procesu
 process.stdin.on("data", (data) => {
     const cmd = data.toString().trim();
     if (!win || win.isDestroyed()) return;
@@ -79,7 +83,7 @@ process.stdin.on("data", (data) => {
             break;
         case COMMANDS.UNMUTE:
             win.webContents.setAudioMuted(false);
-            send("unmuted"); // Dôležité: Potvrdenie pre Main process
+            send("unmuted");
             break;
         case COMMANDS.SHOW:
             win.show();
@@ -90,22 +94,25 @@ process.stdin.on("data", (data) => {
             send("hidden");
             break;
         case COMMANDS.RELOAD:
-            // Pri reloade sa status zmení na RUNNING až cez event did-finish-load
             win.webContents.reload();
             break;
     }
 });
 
-app.whenReady().then(() => {
-    powerSaveBlocker.start("prevent-app-suspension");
-    createWindow();
-    heartbeatInterval = setInterval(() => send(COMMANDS.HEARTBEAT), 5000);
+app.whenReady()
+    .then(() => {
+        log("App ready.");
+        powerSaveBlocker.start("prevent-app-suspension");
 
-    process.stdin.on("close", () => {
-        app.quit();
-    });
+        createWindow();
 
-    process.stdin.on("error", () => {
-        app.quit();
+        // Heartbeat komunikácia
+        setInterval(() => send(COMMANDS.HEARTBEAT), 5000);
+
+        // Ak sa zavrie komunikačný kanál, helper sa musí vypnúť
+        process.stdin.on("close", () => app.quit());
+        process.stdin.on("error", () => app.quit());
+    })
+    .catch((err) => {
+        log(`Boot Error: ${err.message}`);
     });
-});

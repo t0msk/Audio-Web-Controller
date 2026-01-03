@@ -4,222 +4,268 @@ const path = require("path");
 const fs = require("fs");
 const { STATUS, COMMANDS } = require("./constants");
 
-app.setAppUserModelId("com.audio.controller");
+/* ================= PROD / WINDOWS BOOT LOGIC ================= */
 
-const MAX_RESTARTS = 5;
-const HEARTBEAT_TIMEOUT = 25000;
-const RESTART_DELAY = 3000;
-const CONFIG_NAME = "sites.json";
+const isHelper = process.argv.some((arg) =>
+    arg.toLowerCase().includes("helper.js")
+);
 
-let win;
-const helpers = new Map(); // Map<id, HelperObject>
-
-/* ================= CONFIG ================= */
-
-const defaultSites = [
-    {
-        id: "youtube",
-        name: "YouTube",
-        url: "https://youtube.com",
-        autostart: false,
-    },
-];
-
-function getConfigPath() {
-    return path.join(app.getPath("userData"), CONFIG_NAME);
+if (isHelper) {
+    // AK SME HELPER, TU KONČÍME.
+    // Electron sám spracuje helper.js z argumentov.
+    return;
 }
 
-function loadSites() {
-    const configPath = getConfigPath();
-    if (!fs.existsSync(configPath)) {
-        fs.mkdirSync(path.dirname(configPath), { recursive: true });
-        fs.writeFileSync(
-            configPath,
-            JSON.stringify(defaultSites, null, 2),
-            "utf-8"
-        );
-    }
-    return JSON.parse(fs.readFileSync(configPath, "utf-8"));
+// Single Instance Lock len pre Controller
+if (!app.requestSingleInstanceLock()) {
+    app.quit();
+    return;
 }
 
-/* ================= IPC HANDLERS ================= */
+setupMainApp();
 
-ipcMain.handle("get-sites", () => loadSites());
-ipcMain.handle("open-config", async () => shell.openPath(getConfigPath()));
+function setupMainApp() {
+    app.setAppUserModelId("com.audio.controller");
 
-ipcMain.handle("control-site", (_, { id, action }) => {
-    const helper = helpers.get(id);
-    const sites = loadSites();
-    const siteConfig = sites.find((s) => s.id === id);
+    const MAX_RESTARTS = 5;
+    const RESTART_DELAY = 3000;
+    const CONFIG_NAME = "sites.json";
 
-    // START logic
-    if (action === COMMANDS.START) {
-        if (!helper && siteConfig) startHelper(siteConfig);
-        return;
+    let win;
+    const helpers = new Map();
+
+    /* ================= CONFIG ================= */
+
+    function getConfigPath() {
+        return path.join(app.getPath("userData"), CONFIG_NAME);
     }
 
-    if (!helper) return;
+    function loadSites() {
+        const configPath = getConfigPath();
+        const defaultSites = [
+            {
+                id: "youtube",
+                name: "YouTube",
+                url: "https://youtube.com",
+                autostart: false,
+            },
+        ];
 
-    // PREVENCIA BUGU: Ak sa helper ešte len štartuje, ignoruj príkazy (okrem STOP)
-    if (helper.status === STATUS.STARTING && action !== COMMANDS.STOP) {
-        return;
+        if (!fs.existsSync(configPath)) {
+            fs.mkdirSync(path.dirname(configPath), { recursive: true });
+            fs.writeFileSync(
+                configPath,
+                JSON.stringify(defaultSites, null, 2),
+                "utf-8"
+            );
+        }
+        return JSON.parse(fs.readFileSync(configPath, "utf-8"));
     }
 
-    switch (action) {
-        case COMMANDS.STOP:
-            stopHelper(id, true);
-            break;
-        case COMMANDS.MUTE:
-            sendCmd(helper, COMMANDS.MUTE);
-            break;
-        case COMMANDS.UNMUTE:
-            sendCmd(helper, COMMANDS.UNMUTE);
-            break;
-        case COMMANDS.SHOW:
-            sendCmd(helper, COMMANDS.SHOW);
-            break;
-        case COMMANDS.HIDE:
-            sendCmd(helper, COMMANDS.HIDE);
-            break;
-        case COMMANDS.RELOAD:
-            // Nastavíme STARTING, aby UI zamrzlo kým sa reload nedokončí
-            updateHelperState(helper, { status: STATUS.STARTING });
-            sendCmd(helper, COMMANDS.RELOAD);
-            break;
-    }
-});
+    /* ================= IPC HANDLERS ================= */
 
-/* ================= HELPER LOGIC ================= */
+    ipcMain.handle("get-sites", () => loadSites());
+    ipcMain.handle("open-config", async () => shell.openPath(getConfigPath()));
 
-function startHelper(site, prevStats = {}) {
-    if (helpers.has(site.id)) return;
+    ipcMain.handle("control-site", (_, { id, action }) => {
+        const helper = helpers.get(id);
+        if (action === COMMANDS.START) {
+            const sites = loadSites();
+            const siteConfig = sites.find((s) => s.id === id);
+            if (!helper && siteConfig) startHelper(siteConfig);
+            return;
+        }
 
-    const scriptPath = path.join(__dirname, "../helpers/helper.js");
+        if (
+            !helper ||
+            (helper.status === STATUS.STARTING && action !== COMMANDS.STOP)
+        )
+            return;
 
-    const child = spawn(process.execPath, [scriptPath, JSON.stringify(site)], {
-        stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    const helper = {
-        process: child,
-        site,
-        // State tracking
-        status: STATUS.STARTING,
-        isMuted: prevStats.isMuted ?? false,
-        isVisible: prevStats.isVisible ?? false,
-
-        restarts: prevStats.restarts ?? 0,
-        lastHeartbeat: Date.now(),
-        userStopped: false,
-    };
-
-    helpers.set(site.id, helper);
-    notifyRenderer(helper); // Notify immediately that we are starting
-
-    child.stdout.on("data", (data) => {
-        const msgs = data.toString().trim().split("\n");
-        msgs.forEach((msg) => handleHelperMessage(helper, msg.trim()));
-    });
-
-    child.stderr.on("data", (data) =>
-        console.error(`[${site.id}] Err:`, data.toString())
-    );
-
-    child.on("exit", () => {
-        helpers.delete(site.id);
-        if (helper.userStopped) {
-            // Fake helper object just for notification
-            notifyRenderer({ ...helper, status: STATUS.STOPPED });
-        } else {
-            notifyRenderer({ ...helper, status: STATUS.CRASHED });
-            handleCrash(helper);
+        switch (action) {
+            case COMMANDS.STOP:
+                stopHelper(id, true);
+                break;
+            case COMMANDS.MUTE:
+                sendCmd(helper, COMMANDS.MUTE);
+                break;
+            case COMMANDS.UNMUTE:
+                sendCmd(helper, COMMANDS.UNMUTE);
+                break;
+            case COMMANDS.SHOW:
+                sendCmd(helper, COMMANDS.SHOW);
+                break;
+            case COMMANDS.HIDE:
+                sendCmd(helper, COMMANDS.HIDE);
+                break;
+            case COMMANDS.RELOAD:
+                updateHelperState(helper, { status: STATUS.STARTING });
+                sendCmd(helper, COMMANDS.RELOAD);
+                break;
         }
     });
-}
 
-function handleHelperMessage(helper, msg) {
-    if (!msg) return;
+    /* ================= HELPER LOGIC ================= */
 
-    if (msg === COMMANDS.HEARTBEAT) {
-        helper.lastHeartbeat = Date.now();
-        return;
+    function startHelper(site, prevStats = {}) {
+        if (helpers.has(site.id) && helpers.get(site.id).process) return;
+
+        let scriptPath = path.join(__dirname, "..", "helpers", "helper.js");
+        if (
+            scriptPath.includes("app.asar") &&
+            !scriptPath.includes("app.asar.unpacked")
+        ) {
+            scriptPath = scriptPath.replace("app.asar", "app.asar.unpacked");
+        }
+
+        try {
+            // ZMENA: Na Windowse v produkcii pridáme argumenty, ktoré Electronu
+            // vynútia spustenie skriptu
+            const args = [scriptPath, JSON.stringify(site)];
+
+            // Ak sme v produkcii, Electron niekedy vyžaduje tieto flagy pre stabilitu
+            if (app.isPackaged) {
+                args.unshift("--no-sandbox");
+            }
+
+            const child = spawn(process.execPath, args, {
+                stdio: ["pipe", "pipe", "pipe"],
+                env: {
+                    ...process.env,
+                    ELECTRON_RUN_AS_NODE: undefined, // Musí byť undefined, aby fungovalo BrowserWindow
+                },
+            });
+
+            // PRIDAJ TENTO LOG: Zistíme, či proces vôbec odštartoval
+            console.log(`[${site.id}] PID procesu: ${child.pid}`);
+
+            if (!child.pid) {
+                console.error(
+                    `[${site.id}] Proces sa nepodarilo spustiť (žiadne PID).`
+                );
+                return;
+            }
+
+            const helper = {
+                process: child,
+                site,
+                status: STATUS.STARTING,
+                isMuted: prevStats.isMuted ?? false,
+                isVisible: prevStats.isVisible ?? false,
+                restarts: prevStats.restarts ?? 0,
+                userStopped: false,
+            };
+
+            helpers.set(site.id, helper);
+            notifyRenderer(helper);
+
+            child.stdout.on("data", (data) => {
+                data.toString()
+                    .split("\n")
+                    .forEach((m) => handleHelperMessage(helper, m.trim()));
+            });
+
+            child.stderr.on("data", (data) =>
+                console.error(`[${site.id}] Err:`, data.toString())
+            );
+
+            child.on("exit", (code) => {
+                console.log(`[${site.id}] Exit code: ${code}`);
+                helpers.delete(site.id);
+                if (helper.userStopped) {
+                    notifyRenderer({ ...helper, status: STATUS.STOPPED });
+                } else {
+                    notifyRenderer({ ...helper, status: STATUS.CRASHED });
+                    handleCrash(helper);
+                }
+            });
+
+            child.on("error", (err) => {
+                console.error(`[${site.id}] Spawn error:`, err);
+                notifyRenderer({ ...site, status: STATUS.CRASHED });
+            });
+        } catch (e) {
+            console.error(`[${site.id}] Critical spawn error:`, e);
+        }
     }
 
-    // Tu aktualizujeme interný stav na základe správ z helpera
-    if (msg === STATUS.RUNNING) {
-        updateHelperState(helper, { status: STATUS.RUNNING });
-        // Restore state
-        if (helper.isMuted) sendCmd(helper, COMMANDS.MUTE);
-        if (!helper.isVisible) sendCmd(helper, COMMANDS.HIDE);
-    } else if (msg === STATUS.MUTED) {
-        updateHelperState(helper, { isMuted: true });
-    } else if (msg === "unmuted") {
-        updateHelperState(helper, { isMuted: false });
-    } else if (msg === "shown") {
-        updateHelperState(helper, { isVisible: true });
-    } else if (msg === "hidden") {
-        updateHelperState(helper, { isVisible: false });
+    function handleHelperMessage(helper, msg) {
+        if (!msg) return;
+        if (msg === COMMANDS.HEARTBEAT) return;
+
+        if (msg === STATUS.RUNNING) {
+            updateHelperState(helper, { status: STATUS.RUNNING });
+            if (helper.isMuted) sendCmd(helper, COMMANDS.MUTE);
+            if (!helper.isVisible) sendCmd(helper, COMMANDS.HIDE);
+        } else if (msg === STATUS.MUTED)
+            updateHelperState(helper, { isMuted: true });
+        else if (msg === "unmuted")
+            updateHelperState(helper, { isMuted: false });
+        else if (msg === "shown")
+            updateHelperState(helper, { isVisible: true });
+        else if (msg === "hidden")
+            updateHelperState(helper, { isVisible: false });
     }
-}
 
-function updateHelperState(helper, changes) {
-    Object.assign(helper, changes);
-    notifyRenderer(helper);
-}
-
-function stopHelper(id, userInitiated = false) {
-    const helper = helpers.get(id);
-    if (!helper) return;
-
-    helper.userStopped = userInitiated;
-    try {
-        helper.process.kill("SIGTERM");
-    } catch (e) {}
-}
-
-function handleCrash(helper) {
-    if (helper.restarts >= MAX_RESTARTS) return;
-    helper.restarts++;
-    setTimeout(() => startHelper(helper.site, helper), RESTART_DELAY);
-}
-
-function sendCmd(helper, cmd) {
-    if (helper?.process?.stdin?.writable) {
-        helper.process.stdin.write(cmd + "\n");
+    function updateHelperState(helper, changes) {
+        Object.assign(helper, changes);
+        notifyRenderer(helper);
     }
-}
 
-// KĽÚČOVÁ ZMENA: Posielame celý objekt stavu
-function notifyRenderer(helper) {
-    if (win && !win.isDestroyed()) {
-        win.webContents.send("site-status", {
-            id: helper.site.id,
-            status: helper.status,
-            isMuted: helper.isMuted,
-            isVisible: helper.isVisible,
+    function stopHelper(id, userInitiated = false) {
+        const helper = helpers.get(id);
+        if (helper) {
+            helper.userStopped = userInitiated;
+            helper.process.kill();
+        }
+    }
+
+    function handleCrash(helper) {
+        if (helper.restarts >= MAX_RESTARTS) return;
+        helper.restarts++;
+        setTimeout(() => {
+            if (!helper.userStopped) startHelper(helper.site, helper);
+        }, RESTART_DELAY);
+    }
+
+    function sendCmd(helper, cmd) {
+        if (helper?.process?.stdin?.writable)
+            helper.process.stdin.write(cmd + "\n");
+    }
+
+    function notifyRenderer(helper) {
+        if (win && !win.isDestroyed()) {
+            win.webContents.send("site-status", {
+                id: helper.site ? helper.site.id : helper.id,
+                status: helper.status,
+                isMuted: helper.isMuted,
+                isVisible: helper.isVisible,
+            });
+        }
+    }
+
+    function createWindow() {
+        win = new BrowserWindow({
+            width: 950,
+            height: 600,
+            autoHideMenuBar: true,
+            backgroundColor: "#1e1e1e",
+            webPreferences: {
+                preload: path.join(__dirname, "preload.js"),
+                contextIsolation: true,
+                nodeIntegration: false,
+            },
         });
+        Menu.setApplicationMenu(null);
+        win.loadFile(path.join(__dirname, "index.html"));
     }
-}
 
-/* ================= WINDOW ================= */
-
-function createWindow() {
-    win = new BrowserWindow({
-        width: 950,
-        height: 600,
-        autoHideMenuBar: true,
-        backgroundColor: "#1e1e1e",
-        webPreferences: {
-            preload: path.join(__dirname, "preload.js"),
-            contextIsolation: true,
-            nodeIntegration: false,
-        },
+    app.whenReady().then(() => {
+        createWindow();
+        loadSites().forEach((site) => site.autostart && startHelper(site));
     });
-    Menu.setApplicationMenu(null);
-    win.loadFile(path.join(__dirname, "index.html"));
-}
 
-app.whenReady().then(() => {
-    createWindow();
-    loadSites().forEach((site) => site.autostart && startHelper(site));
-});
+    app.on("before-quit", () => {
+        helpers.forEach((h) => h.process && h.process.kill());
+    });
+}

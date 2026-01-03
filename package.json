@@ -13,6 +13,10 @@
     "build": {
         "appId": "com.audio.controller",
         "productName": "AudioWebController",
+        "asar": true,
+        "asarUnpack": [
+            "helpers/helper.js"
+        ],
         "directories": {
             "output": "dist"
         },
