@@ -1,4 +1,4 @@
-"use strict";
+("use strict");
 
 const { app, BrowserWindow, powerSaveBlocker } = require("electron");
 const path = require("path");
@@ -11,7 +11,7 @@ const { STATUS, COMMANDS } = require(path.join(
     "constants.js"
 ));
 
-// Logovanie pre diagnostiku
+// Diagnostický log
 const debugLog = (m) => {
     try {
         const logPath = path.join(app.getPath("userData"), "helper-debug.log");
@@ -34,6 +34,7 @@ try {
     process.exit(1);
 }
 
+// Konfigurácia ciest
 try {
     app.name = `AudioHelper-${site.id}`;
     const sessionPath = path.join(app.getPath("userData"), "sessions", site.id);
@@ -45,12 +46,9 @@ try {
 
 let win = null;
 
-// ZMENA: Funkcia na odosielanie správ cez IPC
 function send(msg) {
     if (process.send) {
         process.send(msg);
-    } else {
-        debugLog("IPC channel not available!");
     }
 }
 
@@ -74,6 +72,13 @@ function createWindow() {
         send(STATUS.RUNNING);
     });
 
+    // FIX ZOMBIE PROCESOV: Ak sa okno zatvorí (napr. krížikom),
+    // musíme okamžite zabiť celý tento helper proces.
+    win.on("closed", () => {
+        debugLog("Window closed by user or system -> Quitting Helper.");
+        app.quit();
+    });
+
     // Keep-alive
     setInterval(() => {
         if (win && !win.isDestroyed()) {
@@ -82,11 +87,10 @@ function createWindow() {
     }, 15000);
 }
 
-// ZMENA: Spracovanie príkazov cez IPC (namiesto stdin)
 process.on("message", (cmd) => {
     if (!win || win.isDestroyed()) return;
 
-    debugLog(`Received command: ${cmd}`);
+    // debugLog(`Received command: ${cmd}`);
 
     switch (cmd) {
         case COMMANDS.MUTE:
@@ -99,6 +103,7 @@ process.on("message", (cmd) => {
             break;
         case COMMANDS.SHOW:
             win.show();
+            win.focus(); // FIX: Vynútenie popredia na Windowse
             send("shown");
             break;
         case COMMANDS.HIDE:
@@ -106,8 +111,6 @@ process.on("message", (cmd) => {
             send("hidden");
             break;
         case COMMANDS.RELOAD:
-            // Pri reloade pošleme status STARTING, aby UI vedelo
-            // (aj keď hlavný proces to rieši, je dobré to potvrdiť)
             win.webContents.reload();
             break;
     }
@@ -115,15 +118,12 @@ process.on("message", (cmd) => {
 
 app.whenReady()
     .then(() => {
-        debugLog("Helper App Ready.");
         powerSaveBlocker.start("prevent-app-suspension");
         createWindow();
 
         setInterval(() => send(COMMANDS.HEARTBEAT), 5000);
 
-        // Ak sa preruší spojenie s rodičom (main process spadne/vypne sa)
         process.on("disconnect", () => {
-            debugLog("Parent disconnected, quitting...");
             app.quit();
         });
     })

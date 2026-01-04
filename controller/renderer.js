@@ -1,4 +1,3 @@
-// Konštanty (v produkcii by boli importované alebo cez preload)
 const STATUS = {
     STARTING: "starting",
     RUNNING: "running",
@@ -24,7 +23,6 @@ async function init() {
 
     sites.forEach((site) => {
         list.appendChild(createRow(site));
-        // Default init state
         updateRow({
             id: site.id,
             status: STATUS.STOPPED,
@@ -33,7 +31,6 @@ async function init() {
         });
     });
 
-    // Prijímame KOMPLETNÝ stavový objekt
     window.api.onStatusChange((fullState) => {
         updateRow(fullState);
     });
@@ -42,14 +39,15 @@ async function init() {
 function createRow(site) {
     const tr = document.createElement("tr");
     tr.id = `row-${site.id}`;
+    // FIX: Pridal som data-cmd="${COMMANDS.SHOW}" priamo do HTML
     tr.innerHTML = `
         <td>${site.name}</td>
         <td class="status-cell">PENDING</td>
         <td class="actions">
             <button data-act="${COMMANDS.START}">Start</button>
             <button data-act="${COMMANDS.STOP}">Stop</button>
-            <button data-act="toggle-mute">Mute</button>
-            <button data-act="toggle-ui">Show UI</button>
+            <button data-act="toggle-mute" data-cmd="${COMMANDS.MUTE}">Mute</button>
+            <button data-act="toggle-ui" data-cmd="${COMMANDS.SHOW}">Show UI</button>
             <button data-act="${COMMANDS.RELOAD}">Reload</button>
         </td>
     `;
@@ -59,35 +57,26 @@ function createRow(site) {
     return tr;
 }
 
-// Toto je mozog UI - už žiadne hádanie
 function updateRow({ id, status, isMuted, isVisible }) {
     const tr = document.getElementById(`row-${id}`);
     if (!tr) return;
 
-    // 1. Uloženie stavu do DOM (pre istotu)
     tr.dataset.status = status;
 
-    // 2. Vizuál statusu
     const statusCell = tr.querySelector(".status-cell");
     let displayStatus = status.toUpperCase();
-    if (status === STATUS.RUNNING && isMuted) displayStatus = "MUTED"; // Muted je len sub-stav pre užívateľa
+    if (status === STATUS.RUNNING && isMuted) displayStatus = "MUTED";
 
     statusCell.textContent = displayStatus;
     statusCell.className = `status-cell status-${status}`;
     if (isMuted) statusCell.classList.add("status-muted");
 
-    // 3. Získanie tlačidiel
     const btnStart = tr.querySelector(`[data-act="${COMMANDS.START}"]`);
     const btnStop = tr.querySelector(`[data-act="${COMMANDS.STOP}"]`);
     const btnMute = tr.querySelector(`[data-act="toggle-mute"]`);
     const btnUi = tr.querySelector(`[data-act="toggle-ui"]`);
     const btnReload = tr.querySelector(`[data-act="${COMMANDS.RELOAD}"]`);
 
-    // 4. Logika Enable/Disable
-    const isRunning = status === STATUS.RUNNING;
-    const isStarting = status === STATUS.STARTING;
-
-    // Defaultne všetko povolíme, potom zakazujeme
     [btnStart, btnStop, btnMute, btnUi, btnReload].forEach(
         (b) => (b.disabled = false)
     );
@@ -95,22 +84,19 @@ function updateRow({ id, status, isMuted, isVisible }) {
     if (status === STATUS.STOPPED || status === STATUS.CRASHED) {
         btnStart.hidden = false;
         btnStop.hidden = true;
-
         btnMute.disabled = true;
         btnUi.disabled = true;
         btnReload.disabled = true;
 
-        // Reset textov
-        btnMute.textContent = "Mute";
+        // Reset buttons to default state
         btnUi.textContent = "Show UI";
-    } else if (isStarting) {
-        // Počas štartovania/reloadu všetko zakážeme, aby user neklikal 2x
+        btnUi.dataset.cmd = COMMANDS.SHOW;
+    } else if (status === STATUS.STARTING) {
         btnStart.disabled = true;
-        btnStop.disabled = false; // Stop povolíme, ak by to zamrzlo
+        btnStop.disabled = false;
         btnMute.disabled = true;
         btnUi.disabled = true;
         btnReload.disabled = true;
-
         btnStart.hidden = true;
         btnStop.hidden = false;
     } else {
@@ -118,7 +104,6 @@ function updateRow({ id, status, isMuted, isVisible }) {
         btnStart.hidden = true;
         btnStop.hidden = false;
 
-        // OPRAVA BUGU UNMUTE: Text a príkaz sa menia podľa isMuted flagu z backendu
         if (isMuted) {
             btnMute.textContent = "Unmute";
             btnMute.dataset.cmd = COMMANDS.UNMUTE;
@@ -127,7 +112,6 @@ function updateRow({ id, status, isMuted, isVisible }) {
             btnMute.dataset.cmd = COMMANDS.MUTE;
         }
 
-        // OPRAVA BUGU HIDE UI: Text a príkaz sa menia podľa isVisible flagu z backendu
         if (isVisible) {
             btnUi.textContent = "Hide UI";
             btnUi.dataset.cmd = COMMANDS.HIDE;
@@ -141,22 +125,22 @@ function updateRow({ id, status, isMuted, isVisible }) {
 async function handleAction(e, id) {
     if (e.target.tagName !== "BUTTON") return;
     const btn = e.target;
-
-    // Okamžitá vizuálna odozva - zakáž tlačidlo
     btn.disabled = true;
 
     let action = btn.dataset.act;
 
-    // Resolve toggle commands
     if (action === "toggle-mute" || action === "toggle-ui") {
         action = btn.dataset.cmd;
     }
 
-    // Pošleme príkaz
-    await window.api.control(id, action);
+    // FIX: Ak by náhodou action bola undefined, nepokračuj (prevencia bugu)
+    if (!action) {
+        console.error("Action is undefined!");
+        btn.disabled = false;
+        return;
+    }
 
-    // Poznámka: Tlačidlo neodomykáme tu. Odomkne sa automaticky,
-    // keď príde "site-status" event z Main processu.
+    await window.api.control(id, action);
 }
 
 document
