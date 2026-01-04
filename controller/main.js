@@ -6,17 +6,14 @@ const { STATUS, COMMANDS } = require("./constants");
 
 /* ================= PREVENCIA DUPLICITY / HELPER CHECK ================= */
 
-// Identifikácia, či je tento proces helper
 const isHelper = process.argv.some((arg) =>
     arg.toLowerCase().includes("helper.js")
 );
 
 if (isHelper) {
-    // Ak sme helper, main.js nepokračuje. Electron spustí helper.js z argumentov.
     return;
 }
 
-// Single Instance Lock (iba pre hlavný ovládač)
 if (!app.requestSingleInstanceLock()) {
     app.quit();
     return;
@@ -65,11 +62,15 @@ ipcMain.handle("open-config", async () => shell.openPath(getConfigPath()));
 
 ipcMain.handle("control-site", (_, { id, action }) => {
     const helper = helpers.get(id);
+
+    // Štartovanie novej stránky
     if (action === COMMANDS.START) {
         const site = loadSites().find((s) => s.id === id);
         if (!helper && site) startHelper(site);
         return;
     }
+
+    // Ak helper neexistuje alebo štartuje (a nechceme ho stopnúť), ignorujeme
     if (
         !helper ||
         (helper.status === STATUS.STARTING && action !== COMMANDS.STOP)
@@ -81,20 +82,12 @@ ipcMain.handle("control-site", (_, { id, action }) => {
             stopHelper(id, true);
             break;
         case COMMANDS.MUTE:
-            sendCmd(helper, COMMANDS.MUTE);
-            break;
         case COMMANDS.UNMUTE:
-            sendCmd(helper, COMMANDS.UNMUTE);
-            break;
         case COMMANDS.SHOW:
-            sendCmd(helper, COMMANDS.SHOW);
-            break;
         case COMMANDS.HIDE:
-            sendCmd(helper, COMMANDS.HIDE);
-            break;
         case COMMANDS.RELOAD:
-            updateHelperState(helper, { status: STATUS.STARTING });
-            sendCmd(helper, COMMANDS.RELOAD);
+            // Posielame príkaz priamo cez IPC objekt, nie cez stdin text
+            sendCmd(helper, action);
             break;
     }
 });
@@ -104,10 +97,8 @@ ipcMain.handle("control-site", (_, { id, action }) => {
 function startHelper(site, prevStats = {}) {
     if (helpers.has(site.id) && helpers.get(site.id).process) return;
 
-    // ROBUSTNÁ DETEKCIA CESTY (Fix pre Windows Portable)
     let scriptPath;
     if (app.isPackaged) {
-        // Skúšame cestu pre vybalený ASAR, ak neexistuje, skúsime štandardnú resources cestu
         scriptPath = path.join(process.resourcesPath, "helpers", "helper.js");
         if (!fs.existsSync(scriptPath)) {
             scriptPath = path.join(
@@ -125,16 +116,11 @@ function startHelper(site, prevStats = {}) {
         const args = [scriptPath, JSON.stringify(site)];
         if (app.isPackaged) args.unshift("--no-sandbox");
 
+        // ZMENA: stdio nastavené na 'ipc' pre komunikáciu
         const child = spawn(process.execPath, args, {
-            stdio: ["pipe", "pipe", "pipe"],
-            env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined },
-            windowsHide: true, // Skryje CMD okno na Windowse
+            stdio: ["ignore", "ignore", "ignore", "ipc"],
+            windowsHide: true,
         });
-
-        if (!child.pid) {
-            console.error(`[${site.id}] Nepodarilo sa získať PID.`);
-            return;
-        }
 
         const helper = {
             process: child,
@@ -149,20 +135,10 @@ function startHelper(site, prevStats = {}) {
         helpers.set(site.id, helper);
         notifyRenderer(helper);
 
-        // Pipe komunikácia (iba ak sú streamy dostupné)
-        if (child.stdout) {
-            child.stdout.on("data", (data) => {
-                data.toString()
-                    .split("\n")
-                    .forEach((m) => handleHelperMessage(helper, m.trim()));
-            });
-        }
-
-        if (child.stderr) {
-            child.stderr.on("data", (data) =>
-                console.error(`[${site.id}] stderr:`, data.toString())
-            );
-        }
+        // ZMENA: Počúvame na 'message' event (Native Node IPC)
+        child.on("message", (msg) => {
+            handleHelperMessage(helper, msg);
+        });
 
         child.on("exit", (code) => {
             console.log(`[${site.id}] Exit kód: ${code}`);
@@ -181,17 +157,25 @@ function startHelper(site, prevStats = {}) {
 
 function handleHelperMessage(helper, msg) {
     if (!msg) return;
-    if (msg === COMMANDS.HEARTBEAT) return;
 
-    if (msg === STATUS.RUNNING) {
+    // Helper posiela objekty alebo stringy, spracujeme oboje
+    const command = typeof msg === "object" ? msg.cmd : msg;
+
+    if (command === COMMANDS.HEARTBEAT) return;
+
+    if (command === STATUS.RUNNING) {
         updateHelperState(helper, { status: STATUS.RUNNING });
+        // Synchronizácia stavu po reštarte/štarte
         if (helper.isMuted) sendCmd(helper, COMMANDS.MUTE);
         if (!helper.isVisible) sendCmd(helper, COMMANDS.HIDE);
-    } else if (msg === STATUS.MUTED)
+    } else if (command === STATUS.MUTED)
         updateHelperState(helper, { isMuted: true });
-    else if (msg === "unmuted") updateHelperState(helper, { isMuted: false });
-    else if (msg === "shown") updateHelperState(helper, { isVisible: true });
-    else if (msg === "hidden") updateHelperState(helper, { isVisible: false });
+    else if (command === "unmuted")
+        updateHelperState(helper, { isMuted: false });
+    else if (command === "shown")
+        updateHelperState(helper, { isVisible: true });
+    else if (command === "hidden")
+        updateHelperState(helper, { isVisible: false });
 }
 
 function updateHelperState(helper, changes) {
@@ -214,8 +198,9 @@ function handleCrash(helper) {
 }
 
 function sendCmd(helper, cmd) {
-    if (helper?.process?.stdin?.writable) {
-        helper.process.stdin.write(cmd + "\n");
+    // ZMENA: Používame child.send() namiesto stdin.write()
+    if (helper && helper.process && helper.process.connected) {
+        helper.process.send(cmd);
     }
 }
 
