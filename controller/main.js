@@ -148,7 +148,7 @@ function startHelper(site, prevStats = {}) {
             site,
             status: STATUS.STARTING,
             isMuted: prevStats.isMuted ?? false,
-            isVisible: prevStats.isVisible ?? false,
+            isVisible: false,
             restarts: prevStats.restarts ?? 0,
             userStopped: false,
         };

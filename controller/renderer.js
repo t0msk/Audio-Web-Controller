@@ -127,35 +127,35 @@ function updateRow({ id, status, isMuted, isVisible }) {
 }
 
 async function handleAction(e, id) {
-    const btn = e.target.closest("button"); // Poistka, ak by si mal v buttonoch spany
+    const btn = e.target.closest("button");
     if (!btn || btn.disabled) return;
 
     btn.disabled = true;
 
+    // Získame základnú akciu (start, stop, reload, toggle-ui, toggle-mute)
     let action = btn.dataset.act;
 
-    // FIX: Robustnejšie spracovanie toggle príkazov
+    // Logika pre Toggle tlačidlá - rozhodujeme sa podľa TEXTU na tlačidle
+    // To zaručí, že ak vidíš "Show UI", pošle sa príkaz "show" bez ohľadu na dataset
     if (action === "toggle-ui") {
-        // Ak dataset.cmd neexistuje, pozrieme sa na text tlačidla
-        action =
-            btn.dataset.cmd ||
-            (btn.textContent.includes("Show") ? COMMANDS.SHOW : COMMANDS.HIDE);
+        const text = btn.textContent.toLowerCase();
+        action = text.includes("show") ? COMMANDS.SHOW : COMMANDS.HIDE;
     } else if (action === "toggle-mute") {
+        const text = btn.textContent.toLowerCase();
         action =
-            btn.dataset.cmd ||
-            (btn.textContent.includes("Mute")
+            text.includes("mute") && !text.includes("unmute")
                 ? COMMANDS.MUTE
-                : COMMANDS.UNMUTE);
+                : COMMANDS.UNMUTE;
     }
 
-    if (!action) {
-        console.error("Stále neviem identifikovať akciu pre:", btn);
+    console.log(`[Client] Clicking ${btn.textContent} -> Sending: ${action}`);
+
+    try {
+        await window.api.control(id, action);
+    } catch (err) {
+        console.error("Control failed", err);
         btn.disabled = false;
-        return;
     }
-
-    console.log(`Posielam príkaz: ${action} pre ID: ${id}`);
-    await window.api.control(id, action);
 }
 
 document
