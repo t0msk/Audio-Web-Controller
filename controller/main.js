@@ -108,12 +108,7 @@ function startHelper(site, prevStats = {}) {
     let scriptPath;
     if (app.isPackaged) {
         // Skúšame cestu pre vybalený ASAR, ak neexistuje, skúsime štandardnú resources cestu
-        scriptPath = path.join(
-            process.resourcesPath,
-            "app.asar.unpacked",
-            "helpers",
-            "helper.js"
-        );
+        scriptPath = path.join(process.resourcesPath, "helpers", "helper.js");
         if (!fs.existsSync(scriptPath)) {
             scriptPath = path.join(
                 process.resourcesPath,
@@ -123,7 +118,7 @@ function startHelper(site, prevStats = {}) {
             );
         }
     } else {
-        scriptPath = path.resolve(__dirname, "..", "helpers", "helper.js");
+        scriptPath = path.join(app.getAppPath(), "helpers", "helper.js");
     }
 
     try {
