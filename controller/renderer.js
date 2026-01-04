@@ -127,25 +127,34 @@ function updateRow({ id, status, isMuted, isVisible }) {
 }
 
 async function handleAction(e, id) {
-    if (e.target.tagName !== "BUTTON") return;
-    const btn = e.target;
+    const btn = e.target.closest("button"); // Poistka, ak by si mal v buttonoch spany
+    if (!btn || btn.disabled) return;
 
-    // Preventívny check, ak by náhodou button nemal data
-    if (btn.disabled) return;
     btn.disabled = true;
 
     let action = btn.dataset.act;
 
-    if (action === "toggle-mute" || action === "toggle-ui") {
-        action = btn.dataset.cmd;
+    // FIX: Robustnejšie spracovanie toggle príkazov
+    if (action === "toggle-ui") {
+        // Ak dataset.cmd neexistuje, pozrieme sa na text tlačidla
+        action =
+            btn.dataset.cmd ||
+            (btn.textContent.includes("Show") ? COMMANDS.SHOW : COMMANDS.HIDE);
+    } else if (action === "toggle-mute") {
+        action =
+            btn.dataset.cmd ||
+            (btn.textContent.includes("Mute")
+                ? COMMANDS.MUTE
+                : COMMANDS.UNMUTE);
     }
 
     if (!action) {
-        console.error("Action undefined, button state:", btn.outerHTML);
+        console.error("Stále neviem identifikovať akciu pre:", btn);
         btn.disabled = false;
         return;
     }
 
+    console.log(`Posielam príkaz: ${action} pre ID: ${id}`);
     await window.api.control(id, action);
 }
 
