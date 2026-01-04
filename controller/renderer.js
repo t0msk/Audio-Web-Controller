@@ -18,17 +18,16 @@ const COMMANDS = {
 const list = document.getElementById("list");
 
 async function init() {
+    // Teraz 'sites' obsahuje už aj aktuálny status (STARTING/RUNNING...)
     const sites = await window.api.getSites();
     list.innerHTML = "";
 
     sites.forEach((site) => {
         list.appendChild(createRow(site));
-        updateRow({
-            id: site.id,
-            status: STATUS.STOPPED,
-            isMuted: false,
-            isVisible: false,
-        });
+
+        // OPRAVA: Okamžitý update UI podľa reálneho stavu z main processu
+        // (Už žiadne manuálne nastavovanie na STOPPED)
+        updateRow(site);
     });
 
     window.api.onStatusChange((fullState) => {
@@ -39,7 +38,8 @@ async function init() {
 function createRow(site) {
     const tr = document.createElement("tr");
     tr.id = `row-${site.id}`;
-    // FIX: Pridal som data-cmd="${COMMANDS.SHOW}" priamo do HTML
+
+    // FIX PRE SHOW UI: Pridané data-cmd="show" ako predvolená hodnota
     tr.innerHTML = `
         <td>${site.name}</td>
         <td class="status-cell">PENDING</td>
@@ -88,15 +88,19 @@ function updateRow({ id, status, isMuted, isVisible }) {
         btnUi.disabled = true;
         btnReload.disabled = true;
 
-        // Reset buttons to default state
+        // Reset stavu tlačidiel
         btnUi.textContent = "Show UI";
         btnUi.dataset.cmd = COMMANDS.SHOW;
+        btnMute.textContent = "Mute";
+        btnMute.dataset.cmd = COMMANDS.MUTE;
     } else if (status === STATUS.STARTING) {
+        // V tomto stave vidíš oranžovú farbu a točí sa to
         btnStart.disabled = true;
-        btnStop.disabled = false;
+        btnStop.disabled = false; // Stop povolený
         btnMute.disabled = true;
         btnUi.disabled = true;
         btnReload.disabled = true;
+
         btnStart.hidden = true;
         btnStop.hidden = false;
     } else {
@@ -125,6 +129,9 @@ function updateRow({ id, status, isMuted, isVisible }) {
 async function handleAction(e, id) {
     if (e.target.tagName !== "BUTTON") return;
     const btn = e.target;
+
+    // Preventívny check, ak by náhodou button nemal data
+    if (btn.disabled) return;
     btn.disabled = true;
 
     let action = btn.dataset.act;
@@ -133,9 +140,8 @@ async function handleAction(e, id) {
         action = btn.dataset.cmd;
     }
 
-    // FIX: Ak by náhodou action bola undefined, nepokračuj (prevencia bugu)
     if (!action) {
-        console.error("Action is undefined!");
+        console.error("Action undefined, button state:", btn.outerHTML);
         btn.disabled = false;
         return;
     }

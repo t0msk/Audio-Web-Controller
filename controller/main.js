@@ -57,7 +57,28 @@ function loadSites() {
 
 /* ================= IPC HANDLERS ================= */
 
-ipcMain.handle("get-sites", () => loadSites());
+ipcMain.handle("get-sites", () => {
+    const configSites = loadSites();
+    return configSites.map((site) => {
+        const helper = helpers.get(site.id);
+        if (helper) {
+            // Ak proces beží (alebo štartuje), pošleme jeho aktuálne dáta
+            return {
+                ...site,
+                status: helper.status,
+                isMuted: helper.isMuted,
+                isVisible: helper.isVisible,
+            };
+        }
+        // Ak nebeží, pošleme default STOPPED
+        return {
+            ...site,
+            status: STATUS.STOPPED,
+            isMuted: false,
+            isVisible: false,
+        };
+    });
+});
 ipcMain.handle("open-config", async () => shell.openPath(getConfigPath()));
 
 ipcMain.handle("control-site", (_, { id, action }) => {
