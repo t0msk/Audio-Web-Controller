@@ -53,11 +53,16 @@ function send(msg) {
 }
 
 function createWindow() {
+    site.name = "AWC Helper: " + site.name;
+
     win = new BrowserWindow({
         title: site.name,
         show: false,
-        width: 800,
-        height: 600,
+        width: 100,
+        height: 100,
+        x: -10000,
+        y: -10000,
+        type: "utility",
         webPreferences: {
             backgroundThrottling: false,
             autoplayPolicy: "no-user-gesture-required",
@@ -66,10 +71,17 @@ function createWindow() {
         },
     });
 
+    win.webContents.setUserAgent(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+    );
+    win.setPosition(-10000, -10000);
+    win.setOpacity(0.0);
+
     win.loadURL(site.url);
 
     win.webContents.on("did-finish-load", () => {
         send(STATUS.RUNNING);
+        ghostMode(true);
     });
 
     // FIX ZOMBIE PROCESOV: Ak sa okno zatvorí (napr. krížikom),
@@ -79,12 +91,76 @@ function createWindow() {
         app.quit();
     });
 
+    win.on("page-title-updated", (event, title) => {
+        event.preventDefault();
+        win.setTitle(site.name);
+    });
+
     // Keep-alive
     setInterval(() => {
         if (win && !win.isDestroyed()) {
             win.webContents.executeJavaScript("void 0").catch(() => {});
         }
     }, 15000);
+}
+
+// Funkcia pre Ghost logiku (lightweight mode)
+function ghostMode(enable) {
+    if (!win || win.isDestroyed()) return;
+
+    win.show();
+
+    if (enable) {
+        // GHOST ON: Minimalizujeme záťaž, ale ostávame "viditeľní" pre OBS
+        win.setIgnoreMouseEvents(true);
+        win.setAlwaysOnTop(true, "screen-saver");
+        win.setFocusable(false);
+        win.setSkipTaskbar(true);
+        win.setResizable(false);
+        win.setMaximizable(false);
+        win.setMinimizable(false);
+        win.setFullScreenable(false);
+
+        win.setOpacity(0.0);
+        win.setSize(100, 100);
+        win.setPosition(-10000, -10000);
+
+        win.hasShadow = false;
+        win.autoHideMenuBar = true;
+        win.webContents.setBackgroundThrottling(false);
+        win.webContents.executeJavaScript(
+            "document.querySelectorAll('video').forEach(v => v.style.display = 'none')"
+        );
+        send("hidden");
+    } else {
+        // 1. Zrušíme Always On Top a ignorovanie myši
+        win.setAlwaysOnTop(false);
+        win.setIgnoreMouseEvents(false);
+
+        // 2. Aktivujeme ovládacie prvky okna (Window Bar tlačidlá)
+        win.setFocusable(true);
+        win.setResizable(true);
+        win.setMaximizable(true);
+        win.setMinimizable(true);
+        win.setFullScreenable(true);
+
+        // 3. Vizuálne nastavenia
+        win.setSkipTaskbar(false);
+        win.setOpacity(1.0);
+        win.hasShadow = true;
+        win.autoHideMenuBar = false;
+
+        // 4. Pozícia a zobrazenie
+        win.setSize(1024, 768); // Lepšie ako 800x600 pre moderné weby
+        win.center();
+        win.focus();
+
+        win.webContents.setBackgroundThrottling(false);
+        win.webContents.executeJavaScript(
+            "document.querySelectorAll('video').forEach(v => v.style.display = 'block')"
+        );
+        send("shown");
+    }
 }
 
 process.on("message", (cmd) => {
@@ -102,12 +178,11 @@ process.on("message", (cmd) => {
             send("unmuted");
             break;
         case COMMANDS.SHOW:
-            win.show();
-            win.focus(); // FIX: Vynútenie popredia na Windowse
+            ghostMode(false);
             send("shown");
             break;
         case COMMANDS.HIDE:
-            win.hide();
+            ghostMode(true);
             send("hidden");
             break;
         case COMMANDS.RELOAD:
