@@ -246,10 +246,23 @@ function createWindow() {
             preload: path.join(__dirname, "preload.js"),
             contextIsolation: true,
             nodeIntegration: false,
+            enableWidevine: process.platform === "win32",
         },
     });
     Menu.setApplicationMenu(null);
     win.loadFile(path.join(__dirname, "index.html"));
+}
+
+if (process.platform === "win32") {
+    try {
+        const widevine = require("electron-widevinecdm");
+        widevine.load(app);
+        console.log("[Widevine] Enabled (Windows)");
+    } catch (e) {
+        console.warn("[Widevine] Failed to load:", e.message);
+    }
+} else {
+    console.log("[Widevine] Disabled (non-Windows)");
 }
 
 app.whenReady().then(() => {

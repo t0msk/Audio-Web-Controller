@@ -1,6 +1,6 @@
 ("use strict");
 
-const { app, BrowserWindow, powerSaveBlocker } = require("electron");
+const { app, BrowserWindow, powerSaveBlocker, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 
@@ -52,6 +52,15 @@ function send(msg) {
     }
 }
 
+function isGoogleAuth(url) {
+    return (
+        url.startsWith("https://accounts.google.com") ||
+        url.includes("accounts.google.com/o/oauth2") ||
+        url.includes("oauth2") ||
+        url.includes("ServiceLogin")
+    );
+}
+
 function createWindow() {
     site.name = "AWC Helper: " + site.name;
 
@@ -60,10 +69,13 @@ function createWindow() {
         show: false,
         width: 100,
         height: 100,
-        x: -10000,
-        y: -10000,
+        x: 0,
+        y: 0,
         type: "utility",
         webPreferences: {
+            plugins: true,
+            webSecurity: true,
+            enableWidevine: process.platform === "win32",
             backgroundThrottling: false,
             autoplayPolicy: "no-user-gesture-required",
             nodeIntegration: false,
@@ -71,10 +83,14 @@ function createWindow() {
         },
     });
 
-    win.webContents.setUserAgent(
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
-    );
-    win.setPosition(-10000, -10000);
+    const userAgent =
+        process.platform === "win32"
+            ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            : "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+    win.webContents.setUserAgent(userAgent);
+
+    //win.setPosition(-10000, -10000);
     win.setOpacity(0.0);
 
     win.loadURL(site.url);
@@ -82,6 +98,21 @@ function createWindow() {
     win.webContents.on("did-finish-load", () => {
         send(STATUS.RUNNING);
         ghostMode(true);
+    });
+
+    win.webContents.on("will-navigate", (event, url) => {
+        if (isGoogleAuth(url)) {
+            event.preventDefault();
+            shell.openExternal(url);
+        }
+    });
+
+    win.webContents.setWindowOpenHandler(({ url }) => {
+        if (isGoogleAuth(url)) {
+            shell.openExternal(url);
+            return { action: "deny" };
+        }
+        return { action: "allow" };
     });
 
     // FIX ZOMBIE PROCESOV: Ak sa okno zatvorí (napr. krížikom),
@@ -112,8 +143,8 @@ function ghostMode(enable) {
 
     if (enable) {
         // GHOST ON: Minimalizujeme záťaž, ale ostávame "viditeľní" pre OBS
-        win.setIgnoreMouseEvents(true);
         win.setAlwaysOnTop(true, "screen-saver");
+        win.setIgnoreMouseEvents(true, { forward: true });
         win.setFocusable(false);
         win.setSkipTaskbar(true);
         win.setResizable(false);
@@ -123,7 +154,7 @@ function ghostMode(enable) {
 
         win.setOpacity(0.0);
         win.setSize(100, 100);
-        win.setPosition(-10000, -10000);
+        //win.setPosition(-10000, -10000);
 
         win.hasShadow = false;
         win.autoHideMenuBar = true;
@@ -153,7 +184,10 @@ function ghostMode(enable) {
         // 4. Pozícia a zobrazenie
         win.setSize(1024, 768); // Lepšie ako 800x600 pre moderné weby
         win.center();
+        win.show();
         win.focus();
+        win.moveTop();
+        win.webContents.focus();
 
         win.webContents.setBackgroundThrottling(false);
         win.webContents.executeJavaScript(
